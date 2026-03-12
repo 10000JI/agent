@@ -55,32 +55,69 @@ _REGION_DB = {
     "서울": {"sidoCd": "110000", "sgguCd": "", "sido_name": "서울특별시", "sggu_name": ""},
     "부산": {"sidoCd": "210000", "sgguCd": "", "sido_name": "부산광역시", "sggu_name": ""},
     ...
-    # 시군구 레벨 (부모 시도 정보 포함)
+    # 시군구 레벨 — 고유한 이름 (강남구 등)
     "강남구": {"sidoCd": "110000", "sgguCd": "110023", "sido_name": "서울특별시", "sggu_name": "강남구"},
-    "종로구": {"sidoCd": "110000", "sgguCd": "110001", "sido_name": "서울특별시", "sggu_name": "종로구"},
+    ...
+    # 중복 시군구 (중구, 남구, 북구, 동구, 서구 등) — "시도 시군구" 복합 키로 저장
+    "서울 중구": {"sidoCd": "110000", "sgguCd": "110002", "sido_name": "서울특별시", "sggu_name": "중구"},
+    "부산 중구": {"sidoCd": "210000", "sgguCd": "210001", "sido_name": "부산광역시", "sggu_name": "중구"},
     ...
 }
-
-def parse_region(region: str) -> dict:
-    """지역명을 파싱하여 API별 파라미터 반환"""
-    ...
 ```
 
-#### 2-2. 각 도구에서의 사용
+#### 2-2. `parse_region()` 함수 — 중복 시군구 처리
 
 ```python
-# 병원/약국 → 숫자 코드 사용
-parsed = parse_region(region)
-params = {"sidoCd": parsed["sidoCd"], "sgguCd": parsed["sgguCd"]}
+def parse_region(region: str) -> dict:
+    """지역명을 파싱하여 API별 파라미터 반환.
 
-# 응급실 → 한글 이름 사용
-parsed = parse_region(region)
-params = {"STAGE1": parsed["sido_name"], "STAGE2": parsed["sggu_name"]}
+    처리 순서:
+    1. 원문 전체 매칭 ("서울 중구" → 복합 키 직접 매칭)
+    2. 공백 분리 후 "시도 + 시군구" 복합 키 매칭 ("서울 강남구")
+    3. 단독 키 매칭 ("강남구", "서울")
+    4. 폴백 — 원문 그대로 반환
+    """
 ```
 
-#### 2-3. 폴백 처리
+**중복 시군구 disambiguiation**: `중구`, `남구`, `북구`, `동구`, `서구` 등 여러 도시에 존재하는 구 이름은 단독 키로 등록하지 않는다. 반드시 "시도 시군구" 형태로만 매칭된다. 에이전트 프롬프트에서 시도+시군구를 함께 넘기도록 유도한다.
 
-매핑에 없는 지역명은 기존 방식대로 `emdongNm`(병원/약국) 또는 `STAGE1`(응급실)에 원문 그대로 전달한다.
+#### 2-3. 각 도구에서의 사용
+
+```python
+# 병원 도구 — sidoCd/sgguCd 사용, emdongNm 비움
+parsed = parse_region(region)
+params = {
+    "sidoCd": parsed["sidoCd"],
+    "sgguCd": parsed["sgguCd"],
+    "emdongNm": "",  # 코드 매칭 성공 시 비움
+}
+
+# 약국 도구 — 동일 구조 (기존 emdongNm만 사용 → sidoCd/sgguCd 추가)
+parsed = parse_region(region)
+params = {
+    "sidoCd": parsed["sidoCd"],
+    "sgguCd": parsed["sgguCd"],
+    "emdongNm": "",
+}
+
+# 응급실 도구 — 한글 이름 사용
+parsed = parse_region(region)
+params = {
+    "STAGE1": parsed["sido_name"],
+    "STAGE2": parsed["sggu_name"],
+}
+```
+
+#### 2-4. 폴백 처리
+
+매핑에 없는 지역명은 `parse_region()`이 아래를 반환한다:
+```python
+{"sidoCd": "", "sgguCd": "", "sido_name": "", "sggu_name": "", "raw": region}
+```
+
+각 도구에서 `sidoCd`가 빈 문자열이면 기존 방식으로 폴백:
+- 병원/약국: `emdongNm=region` (읍면동 검색)
+- 응급실: `STAGE1=region` (원문 그대로)
 
 ### 3. 진료과목 코드 수정 (#4)
 
@@ -122,10 +159,18 @@ agent = create_agent(
 #### 4-2. `agent_service.py` — 노드명 정리
 
 `create_agent`의 노드명은 `"model"`, `"tools"` (검증 완료).
-기존 `"agent"` 분기를 제거한다.
+기존 `"agent"` 분기를 제거한다. whitelist와 라우팅 모두 수정.
 
 ```python
-# Before
+# Before (line 99 whitelist)
+if not event or step not in ("agent", "model", "tools"):
+    continue
+
+# After
+if not event or step not in ("model", "tools"):
+    continue
+
+# Before (line 107 routing)
 if step in ("agent", "model"):
 
 # After
