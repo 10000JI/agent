@@ -23,9 +23,15 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str
     OPENAI_MODEL: str
     
-    # 기본 설정 (추가 환경변수가 필요하면 여기에 추가하세요)
+    # Elasticsearch 설정
+    ES_URL: str
+    ES_USERNAME: str
+    ES_PASSWORD: str
+    ES_INDEX: str
 
-    # IMP: DeepAgents 라이브러리 실행 시 Graph 에이전트의 최대 재귀 호출 횟수(Recursion Limit) 설정
+    # 공공데이터포털 API 키 (병원 검색, 의약품 정보)
+    PUBLIC_DATA_API_KEY: str = ""
+
     # DeepAgents 설정
     DEEPAGENT_RECURSION_LIMIT: int = 20
 
