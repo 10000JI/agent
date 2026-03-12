@@ -1,80 +1,106 @@
-# Agent Education Template
+# Medical AI Agent
 
-FastAPI 기반의 LangChain v1.0 에이전트 교육용 템플릿입니다.
+LangChain + LangGraph 기반의 의료 전문 AI 에이전트입니다. Elasticsearch BM25 검색과 공공데이터포털 API를 활용하여 의료 정보, 병원, 의약품, 응급실, 약국 정보를 제공합니다.
 
 ## 기술 스택
 
-- FastAPI
-- LangChain v1.0
-- OpenAI (GPT-4)
-- uv (패키지 관리)
+- **Backend**: FastAPI, LangChain v1.0, LangGraph
+- **LLM**: OpenAI GPT-4.1
+- **검색엔진**: Elasticsearch (BM25 기반 의료 문서 검색)
+- **외부 API**: 공공데이터포털 (병원, 의약품, 응급실, 약국)
+- **패키지 관리**: uv
 
-## 환경 준비 및 설치 가이드 (교육생용)
+## 에이전트 도구 (Tools)
 
-본 에이전트 프로젝트는 파이썬 패키지 매니저로 **`uv`**를 사용합니다. 아래 절차에 따라 실습 환경을 구성해 주세요.
+| 도구 | 설명 | 데이터 출처 |
+|------|------|-------------|
+| `search_medical_info` | 증상, 질병, 치료법 등 의료 문서 검색 | Elasticsearch (BM25) |
+| `search_hospitals` | 지역/진료과목 기반 병원 검색 | 건강보험심사평가원 API |
+| `get_drug_info` | 의약품 효능, 용법, 부작용 조회 | 식품의약품안전처 API |
+| `search_emergency_rooms` | 응급실 실시간 병상 가용 정보 | 국립중앙의료원 API |
+| `search_pharmacies` | 지역 기반 약국 검색 | 건강보험심사평가원 API |
+
+## 환경 준비 및 설치
 
 ### 1. 사전 요구사항
-* Python 3.11 이상 3.13 이하 버전을 권장합니다.
-* `uv` 패키지 매니저 설치:
+* Python 3.11 이상 3.13 이하
+* `uv` 패키지 매니저:
   ```bash
-  # macOS / Linux / Windows (WSL)
   curl -LsSf https://astral.sh/uv/install.sh | sh
   ```
 
-### 2. 프로젝트 의존성 설치
-프로젝트 폴더(`agent`)로 이동한 뒤, 아래 명령어를 실행하여 가상환경 세팅 및 관련 패키지 설치를 진행합니다.
-
+### 2. 의존성 설치
 ```bash
-# 파이썬 의존성 동기화 및 가상환경(.venv) 자동 생성
 uv sync
 ```
-* 명령어가 정상적으로 완료되면 프로젝트 디렉토리 내에 `.venv` 폴더가 생성됩니다.
 
 ### 3. 환경 변수 설정
-에이전트 구동을 위해 필요한 API 키 등을 설정해야 합니다.
-
-1. 프로젝트 루트 경로의 `env.sample` 파일을 복사하여 `.env` 파일을 생성합니다.
-   ```bash
-   cp env.sample .env
-   ```
-2. 생성된 `.env` 파일을 열고, 아래와 같이 본인의 **OpenAI API Key**를 입력합니다.
-   ```env
-   OPENAI_API_KEY=your_openai_api_key_here
-   OPENAI_MODEL=gpt-4o  # 또는 gpt-4
-   ```
-
-### 4. 개발 서버 실행
-
-환경변수 세팅까지 끝났다면 가상 환경 내에서 서버를 구동합니다.
-
 ```bash
-# uvicorn 서버 실행
+cp env.sample .env
+```
+
+`.env` 파일에 아래 항목을 설정합니다:
+
+```env
+# OpenAI
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-4.1
+
+# Elasticsearch
+ES_URL=https://your-es-url
+ES_USERNAME=elastic
+ES_PASSWORD=your_password
+ES_INDEX=your_index
+
+# 공공데이터포털 API 키 (https://www.data.go.kr)
+PUBLIC_DATA_API_KEY=your_api_key
+```
+
+### 4. 서버 실행
+```bash
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-서버가 성공적으로 구동되면 브라우저에서 `http://localhost:8000/docs` 로 접속하여 API 문서를 확인할 수 있습니다.
+
+API 문서: `http://localhost:8000/docs`
 
 ## 프로젝트 구조
 
 ```
 agent/
 ├── app/
-│   ├── api/              # API 엔드포인트
-│   │   └── routes/       # 라우트 정의
-│   ├── core/             # 설정 및 초기화
-│   │   └── config.py     # 설정 관리
-│   ├── models/           # 데이터 모델
-│   ├── services/         # 비즈니스 로직
-│   │   └── agent_service.py  # 에이전트 서비스
-│   ├── utils/            # 유틸리티 함수
-│   └── main.py           # FastAPI 앱 진입점
-├── tests/                # 테스트 코드
-├── pyproject.toml        # 프로젝트 설정 및 의존성
+│   ├── api/
+│   │   └── routes/
+│   │       └── chat.py            # POST /api/v1/chat (SSE 스트리밍)
+│   ├── agents/
+│   │   ├── medical_agent.py       # ReAct 에이전트 생성
+│   │   ├── prompts.py             # 시스템 프롬프트
+│   │   └── tools.py               # 5개 도구 정의
+│   ├── core/
+│   │   └── config.py              # 환경 설정 (pydantic-settings)
+│   ├── models/                    # 요청/응답 모델
+│   ├── services/
+│   │   └── agent_service.py       # 에이전트 실행 및 SSE 스트리밍
+│   ├── utils/
+│   └── main.py                    # FastAPI 앱 진입점
+├── tests/
+├── pyproject.toml
 └── README.md
 ```
 
 ## API 엔드포인트
 
-- `GET /`: API 정보
-- `GET /health`: 헬스 체크
-- `POST /api/query/`: 자연어 쿼리 처리
+| Method | Path | 설명 |
+|--------|------|------|
+| `GET` | `/` | API 정보 |
+| `GET` | `/health` | 헬스 체크 |
+| `POST` | `/api/v1/chat` | 채팅 (SSE 스트리밍 응답) |
 
+## 질문 예시
+
+```
+- "결핵 치료 방법 알려줘"
+- "강남구 내과 병원 추천해줘"
+- "타이레놀 부작용 알려줘"
+- "서울 응급실 빈 병상 알려줘"
+- "종로구 약국 찾아줘"
+```
