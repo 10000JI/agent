@@ -1,5 +1,5 @@
+from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.agents.prompts import MEDICAL_SYSTEM_PROMPT
@@ -29,10 +29,10 @@ def create_medical_agent(llm: ChatOpenAI, checkpointer: MemorySaver):
     """
     custom_logger.info("의료 에이전트 생성 중...")
 
-    agent = create_react_agent(
+    agent = create_agent(
         model=llm,
         tools=MEDICAL_TOOLS,
-        prompt=MEDICAL_SYSTEM_PROMPT,
+        system_prompt=MEDICAL_SYSTEM_PROMPT,
         checkpointer=checkpointer,
     )
 
