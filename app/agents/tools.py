@@ -1,10 +1,14 @@
-from langchain_core.tools import tool
+import xml.etree.ElementTree as ET
 from typing import Optional
+
+import httpx
 from elasticsearch import Elasticsearch
+from langchain_core.tools import tool
 from langchain_elasticsearch import ElasticsearchRetriever
+
+from app.agents.region_codes import parse_region
 from app.core.config import settings
 from app.utils.logger import custom_logger
-import httpx
 
 
 # ============================================================
@@ -48,7 +52,7 @@ def get_medical_retriever() -> ElasticsearchRetriever:
 
 
 # ============================================================
-# Tool 1: 의료 문서 검색 (Elasticsearch BM25)
+# Tool 1: 의료 문서 검색 (Elasticsearch BM25) — 동기 유지
 # ============================================================
 
 @tool
@@ -68,7 +72,6 @@ def search_medical_info(query: str) -> str:
         results = []
         for i, doc in enumerate(docs[:5], 1):
             content = doc.page_content[:500]
-            # metadata가 _source 안에 중첩될 수 있음
             meta = doc.metadata.get("_source", doc.metadata)
             source = meta.get("source_spec", "unknown")
             year = meta.get("creation_year", "unknown")
@@ -85,11 +88,11 @@ def search_medical_info(query: str) -> str:
 # ============================================================
 
 @tool
-def search_hospitals(region: str, specialty: Optional[str] = None) -> str:
+async def search_hospitals(region: str, specialty: Optional[str] = None) -> str:
     """지역과 진료과목을 기반으로 병원/의원 정보를 검색합니다.
 
     Args:
-        region: 검색할 지역명 (예: '서울', '강남구', '부산')
+        region: 검색할 지역명 (예: '서울', '강남구', '부산 중구')
         specialty: 진료과목 (예: '내과', '정형외과', '소아과'). 선택사항.
     """
     api_key = settings.PUBLIC_DATA_API_KEY
@@ -101,14 +104,15 @@ def search_hospitals(region: str, specialty: Optional[str] = None) -> str:
         )
 
     try:
+        parsed = parse_region(region)
         url = "http://apis.data.go.kr/B551182/hospInfoServicev2/getHospBasisList"
         params = {
             "serviceKey": api_key,
             "numOfRows": "5",
             "pageNo": "1",
-            "sidoCd": "",
-            "sgguCd": "",
-            "emdongNm": region,
+            "sidoCd": parsed["sidoCd"],
+            "sgguCd": parsed["sgguCd"],
+            "emdongNm": parsed.get("emdongNm", "") if parsed["sidoCd"] else parsed["raw"],
             "yadmNm": "",
             "zipCd": "",
             "_type": "json",
@@ -116,8 +120,8 @@ def search_hospitals(region: str, specialty: Optional[str] = None) -> str:
         if specialty:
             params["dgsbjtCd"] = _get_specialty_code(specialty)
 
-        with httpx.Client(timeout=10) as client:
-            response = client.get(url, params=params)
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(url, params=params)
             data = response.json()
 
         items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
@@ -151,7 +155,7 @@ def search_hospitals(region: str, specialty: Optional[str] = None) -> str:
 # ============================================================
 
 @tool
-def get_drug_info(drug_name: str) -> str:
+async def get_drug_info(drug_name: str) -> str:
     """의약품명으로 효능, 용법, 부작용 등 상세 정보를 조회합니다.
 
     Args:
@@ -175,8 +179,8 @@ def get_drug_info(drug_name: str) -> str:
             "type": "json",
         }
 
-        with httpx.Client(timeout=10) as client:
-            response = client.get(url, params=params)
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(url, params=params)
             data = response.json()
 
         items = data.get("body", {}).get("items", [])
@@ -211,11 +215,11 @@ def get_drug_info(drug_name: str) -> str:
 # ============================================================
 
 @tool
-def search_emergency_rooms(region: str) -> str:
+async def search_emergency_rooms(region: str) -> str:
     """지역 기반으로 응급실의 실시간 병상 가용 정보를 조회합니다.
 
     Args:
-        region: 검색할 지역명 (예: '서울', '강남구', '부산', '대구')
+        region: 검색할 지역명 (예: '서울', '서울 강남구', '부산')
     """
     api_key = settings.PUBLIC_DATA_API_KEY
     if not api_key:
@@ -226,23 +230,19 @@ def search_emergency_rooms(region: str) -> str:
         )
 
     try:
-        # 지역명 → 시도 코드 변환
-        sido_code = _get_sido_code(region)
-
+        parsed = parse_region(region)
         url = "http://apis.data.go.kr/B552657/ErmctInfoInqireService/getEmrrmRltmUsefulSckbdInfoInqire"
         params = {
             "serviceKey": api_key,
-            "STAGE1": sido_code if sido_code else region,
-            "STAGE2": "" if sido_code else "",
+            "STAGE1": parsed["sido_name"] if parsed["sido_name"] else parsed["raw"],
+            "STAGE2": parsed["sggu_name"],
             "pageNo": "1",
             "numOfRows": "5",
         }
 
-        with httpx.Client(timeout=10) as client:
-            response = client.get(url, params=params)
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(url, params=params)
 
-        # XML 응답 파싱
-        import xml.etree.ElementTree as ET
         root = ET.fromstring(response.text)
 
         items = root.findall(".//item")
@@ -254,11 +254,9 @@ def search_emergency_rooms(region: str) -> str:
             name = _xml_text(item, "dutyName")
             addr = _xml_text(item, "dutyAddr")
             tel = _xml_text(item, "dutyTel3")
-            hvec = _xml_text(item, "hvec")  # 응급실 일반 병상 수
-            hvoc = _xml_text(item, "hvoc")  # 수술실 가용 여부
-            hvs01 = _xml_text(item, "hvs01")  # 일반 입원실
+            hvec = _xml_text(item, "hvec")
+            hvoc = _xml_text(item, "hvoc")
 
-            # 수술실 가용 여부 판단 (숫자가 아닌 경우 '불가' 처리)
             try:
                 surgery_available = "가능" if hvoc and int(hvoc) > 0 else "불가"
             except (ValueError, TypeError):
@@ -283,11 +281,11 @@ def search_emergency_rooms(region: str) -> str:
 # ============================================================
 
 @tool
-def search_pharmacies(region: str) -> str:
+async def search_pharmacies(region: str) -> str:
     """지역 기반으로 약국 정보를 검색합니다.
 
     Args:
-        region: 검색할 지역명 (예: '강남구', '종로구', '해운대구')
+        region: 검색할 지역명 (예: '강남구', '종로구', '서울 중구')
     """
     api_key = settings.PUBLIC_DATA_API_KEY
     if not api_key:
@@ -298,17 +296,20 @@ def search_pharmacies(region: str) -> str:
         )
 
     try:
+        parsed = parse_region(region)
         url = "http://apis.data.go.kr/B551182/pharmacyInfoService/getParmacyBasisList"
         params = {
             "serviceKey": api_key,
             "numOfRows": "5",
             "pageNo": "1",
-            "emdongNm": region,
+            "sidoCd": parsed["sidoCd"],
+            "sgguCd": parsed["sgguCd"],
+            "emdongNm": parsed.get("emdongNm", "") if parsed["sidoCd"] else parsed["raw"],
             "_type": "json",
         }
 
-        with httpx.Client(timeout=10) as client:
-            response = client.get(url, params=params)
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(url, params=params)
             data = response.json()
 
         items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
@@ -345,21 +346,8 @@ def _xml_text(item, tag: str) -> str:
     return el.text if el is not None and el.text else "정보없음"
 
 
-def _get_sido_code(region: str) -> str:
-    """지역명을 시도명으로 매핑"""
-    mapping = {
-        "서울": "서울특별시", "부산": "부산광역시", "대구": "대구광역시",
-        "인천": "인천광역시", "광주": "광주광역시", "대전": "대전광역시",
-        "울산": "울산광역시", "세종": "세종특별자치시", "경기": "경기도",
-        "강원": "강원특별자치도", "충북": "충청북도", "충남": "충청남도",
-        "전북": "전북특별자치도", "전남": "전라남도", "경북": "경상북도",
-        "경남": "경상남도", "제주": "제주특별자치도",
-    }
-    return mapping.get(region, "")
-
-
 # ============================================================
-# 진료과목 코드 매핑 (건강보험심사평가원 기준)
+# 진료과목 코드 매핑 (건강보험심사평가원 기준, API 검증 완료)
 # ============================================================
 
 def _get_specialty_code(specialty: str) -> str:
@@ -370,7 +358,8 @@ def _get_specialty_code(specialty: str) -> str:
         "마취통증의학과": "09", "산부인과": "10", "소아청소년과": "11", "소아과": "11",
         "안과": "12", "이비인후과": "13", "피부과": "14", "비뇨의학과": "15",
         "영상의학과": "16", "방사선종양학과": "17", "병리과": "18", "진단검사의학과": "19",
-        "재활의학과": "20", "핵의학과": "21", "가정의학과": "22", "응급의학과": "23",
+        "직업환경의학과": "20", "재활의학과": "21", "핵의학과": "22",
+        "가정의학과": "23", "응급의학과": "24",
         "치과": "49", "한방내과": "80", "한방부인과": "81", "한방소아과": "82",
         "한방안이비인후피부과": "83", "한방신경정신과": "84", "침구과": "85",
         "한방재활의학과": "86", "사상체질과": "87", "한방응급": "88",

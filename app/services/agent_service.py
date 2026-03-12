@@ -96,7 +96,7 @@ class AgentService:
                     custom_logger.info(f"에이전트 청크: {chunk}")
                     try:
                         for step, event in chunk.items():
-                            if not event or step not in ("agent", "model", "tools"):
+                            if not event or step not in ("model", "tools"):
                                 continue
                             messages = event.get("messages", [])
                             if not messages:
@@ -104,7 +104,7 @@ class AgentService:
                             message = messages[0]
 
                             # agent/model 단계: 도구 호출 또는 최종 응답
-                            if step in ("agent", "model"):
+                            if step == "model":
                                 tool_calls = message.tool_calls
                                 if tool_calls:
                                     # 도구 호출 중 → "model" 이벤트
