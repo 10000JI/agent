@@ -207,6 +207,158 @@ def get_drug_info(drug_name: str) -> str:
 
 
 # ============================================================
+# Tool 4: 응급실 실시간 정보 (국립중앙의료원 API)
+# ============================================================
+
+@tool
+def search_emergency_rooms(region: str) -> str:
+    """지역 기반으로 응급실의 실시간 병상 가용 정보를 조회합니다.
+
+    Args:
+        region: 검색할 지역명 (예: '서울', '강남구', '부산', '대구')
+    """
+    api_key = settings.PUBLIC_DATA_API_KEY
+    if not api_key:
+        return (
+            "응급실 정보 조회 기능을 사용하려면 공공데이터포털(data.go.kr)에서 "
+            "'국립중앙의료원_응급의료정보제공서비스' API 키를 발급받아 "
+            ".env 파일의 PUBLIC_DATA_API_KEY에 설정해주세요."
+        )
+
+    try:
+        # 지역명 → 시도 코드 변환
+        sido_code = _get_sido_code(region)
+
+        url = "http://apis.data.go.kr/B552657/ErmctInfoInqireService/getEmrrmRltmUsefulSckbdInfoInqire"
+        params = {
+            "serviceKey": api_key,
+            "STAGE1": sido_code if sido_code else region,
+            "STAGE2": "" if sido_code else "",
+            "pageNo": "1",
+            "numOfRows": "5",
+        }
+
+        with httpx.Client(timeout=10) as client:
+            response = client.get(url, params=params)
+
+        # XML 응답 파싱
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(response.text)
+
+        items = root.findall(".//item")
+        if not items:
+            return f"'{region}' 지역의 응급실 정보를 찾을 수 없습니다."
+
+        results = []
+        for i, item in enumerate(items[:5], 1):
+            name = _xml_text(item, "dutyName")
+            addr = _xml_text(item, "dutyAddr")
+            tel = _xml_text(item, "dutyTel3")
+            hvec = _xml_text(item, "hvec")  # 응급실 일반 병상 수
+            hvoc = _xml_text(item, "hvoc")  # 수술실 가용 여부
+            hvs01 = _xml_text(item, "hvs01")  # 일반 입원실
+
+            # 수술실 가용 여부 판단 (숫자가 아닌 경우 '불가' 처리)
+            try:
+                surgery_available = "가능" if hvoc and int(hvoc) > 0 else "불가"
+            except (ValueError, TypeError):
+                surgery_available = "정보없음"
+
+            results.append(
+                f"[{i}] {name}\n"
+                f"   주소: {addr}\n"
+                f"   응급실 전화: {tel}\n"
+                f"   응급실 가용 병상: {hvec}개\n"
+                f"   수술실 가용: {surgery_available}"
+            )
+
+        return "\n\n".join(results)
+    except Exception as e:
+        custom_logger.error(f"응급실 정보 조회 오류: {e}")
+        return f"응급실 정보 조회 중 오류가 발생했습니다: {str(e)}"
+
+
+# ============================================================
+# Tool 5: 약국 검색 (건강보험심사평가원 API)
+# ============================================================
+
+@tool
+def search_pharmacies(region: str) -> str:
+    """지역 기반으로 약국 정보를 검색합니다.
+
+    Args:
+        region: 검색할 지역명 (예: '강남구', '종로구', '해운대구')
+    """
+    api_key = settings.PUBLIC_DATA_API_KEY
+    if not api_key:
+        return (
+            "약국 검색 기능을 사용하려면 공공데이터포털(data.go.kr)에서 "
+            "'건강보험심사평가원_약국정보서비스' API 키를 발급받아 "
+            ".env 파일의 PUBLIC_DATA_API_KEY에 설정해주세요."
+        )
+
+    try:
+        url = "http://apis.data.go.kr/B551182/pharmacyInfoService/getParmacyBasisList"
+        params = {
+            "serviceKey": api_key,
+            "numOfRows": "5",
+            "pageNo": "1",
+            "emdongNm": region,
+            "_type": "json",
+        }
+
+        with httpx.Client(timeout=10) as client:
+            response = client.get(url, params=params)
+            data = response.json()
+
+        items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+        if not items:
+            return f"'{region}' 지역에서 약국을 찾을 수 없습니다."
+
+        if isinstance(items, dict):
+            items = [items]
+
+        results = []
+        for i, item in enumerate(items[:5], 1):
+            name = item.get("yadmNm", "정보없음")
+            addr = item.get("addr", "정보없음")
+            tel = item.get("telno", "정보없음")
+            results.append(
+                f"[{i}] {name}\n"
+                f"   주소: {addr}\n"
+                f"   전화: {tel}"
+            )
+
+        return "\n\n".join(results)
+    except Exception as e:
+        custom_logger.error(f"약국 검색 오류: {e}")
+        return f"약국 검색 중 오류가 발생했습니다: {str(e)}"
+
+
+# ============================================================
+# 유틸리티 함수
+# ============================================================
+
+def _xml_text(item, tag: str) -> str:
+    """XML 엘리먼트에서 텍스트 추출"""
+    el = item.find(tag)
+    return el.text if el is not None and el.text else "정보없음"
+
+
+def _get_sido_code(region: str) -> str:
+    """지역명을 시도명으로 매핑"""
+    mapping = {
+        "서울": "서울특별시", "부산": "부산광역시", "대구": "대구광역시",
+        "인천": "인천광역시", "광주": "광주광역시", "대전": "대전광역시",
+        "울산": "울산광역시", "세종": "세종특별자치시", "경기": "경기도",
+        "강원": "강원특별자치도", "충북": "충청북도", "충남": "충청남도",
+        "전북": "전북특별자치도", "전남": "전라남도", "경북": "경상북도",
+        "경남": "경상남도", "제주": "제주특별자치도",
+    }
+    return mapping.get(region, "")
+
+
+# ============================================================
 # 진료과목 코드 매핑 (건강보험심사평가원 기준)
 # ============================================================
 

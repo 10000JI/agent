@@ -3,12 +3,18 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.agents.prompts import MEDICAL_SYSTEM_PROMPT
-from app.agents.tools import search_medical_info, search_hospitals, get_drug_info
+from app.agents.tools import (
+    search_medical_info, search_hospitals, get_drug_info,
+    search_emergency_rooms, search_pharmacies,
+)
 from app.utils.logger import custom_logger
 
 
 # 의료 에이전트에서 사용하는 도구 목록
-MEDICAL_TOOLS = [search_medical_info, search_hospitals, get_drug_info]
+MEDICAL_TOOLS = [
+    search_medical_info, search_hospitals, get_drug_info,
+    search_emergency_rooms, search_pharmacies,
+]
 
 
 def create_medical_agent(llm: ChatOpenAI, checkpointer: MemorySaver):
