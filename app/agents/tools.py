@@ -8,7 +8,6 @@ from langchain_elasticsearch import ElasticsearchRetriever
 
 from app.agents.region_codes import parse_region
 from app.core.config import settings
-from app.utils.logger import custom_logger
 
 
 # ============================================================
@@ -62,25 +61,21 @@ def search_medical_info(query: str) -> str:
     Args:
         query: 검색할 증상, 질병명, 치료법 등 (예: '결핵 치료', '천식 증상', '응급처치')
     """
-    try:
-        retriever = get_medical_retriever()
-        docs = retriever.invoke(query)
+    retriever = get_medical_retriever()
+    docs = retriever.invoke(query)
 
-        if not docs:
-            return "관련 의료 정보를 찾을 수 없습니다."
+    if not docs:
+        return "관련 의료 정보를 찾을 수 없습니다."
 
-        results = []
-        for i, doc in enumerate(docs[:5], 1):
-            content = doc.page_content[:500]
-            meta = doc.metadata.get("_source", doc.metadata)
-            source = meta.get("source_spec", "unknown")
-            year = meta.get("creation_year", "unknown")
-            results.append(f"[문서 {i}] (출처: {source}, 연도: {year})\n{content}")
+    results = []
+    for i, doc in enumerate(docs[:5], 1):
+        content = doc.page_content[:500]
+        meta = doc.metadata.get("_source", doc.metadata)
+        source = meta.get("source_spec", "unknown")
+        year = meta.get("creation_year", "unknown")
+        results.append(f"[문서 {i}] (출처: {source}, 연도: {year})\n{content}")
 
-        return "\n\n---\n\n".join(results)
-    except Exception as e:
-        custom_logger.error(f"의료 문서 검색 오류: {e}")
-        return f"검색 중 오류가 발생했습니다: {str(e)}"
+    return "\n\n---\n\n".join(results)
 
 
 # ============================================================
@@ -95,59 +90,47 @@ async def search_hospitals(region: str, specialty: Optional[str] = None) -> str:
         region: 검색할 지역명 (예: '서울', '강남구', '부산 중구')
         specialty: 진료과목 (예: '내과', '정형외과', '소아과'). 선택사항.
     """
-    api_key = settings.PUBLIC_DATA_API_KEY
-    if not api_key:
-        return (
-            "병원 검색 기능을 사용하려면 공공데이터포털(data.go.kr)에서 "
-            "'건강보험심사평가원_병원정보서비스' API 키를 발급받아 "
-            ".env 파일의 PUBLIC_DATA_API_KEY에 설정해주세요."
+    parsed = parse_region(region)
+    url = settings.HOSPITAL_API_URL
+    params = {
+        "serviceKey": settings.PUBLIC_DATA_API_KEY,
+        "numOfRows": "5",
+        "pageNo": "1",
+        "sidoCd": parsed["sidoCd"],
+        "sgguCd": parsed["sgguCd"],
+        "emdongNm": parsed.get("emdongNm", "") if parsed["sidoCd"] else parsed["raw"],
+        "yadmNm": "",
+        "zipCd": "",
+        "_type": "json",
+    }
+    if specialty:
+        params["dgsbjtCd"] = _get_specialty_code(specialty)
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(url, params=params)
+        data = response.json()
+
+    items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+    if not items:
+        return f"'{region}' 지역에서 관련 병원을 찾을 수 없습니다."
+
+    if isinstance(items, dict):
+        items = [items]
+
+    results = []
+    for i, item in enumerate(items[:5], 1):
+        name = item.get("yadmNm", "정보없음")
+        addr = item.get("addr", "정보없음")
+        tel = item.get("telno", "정보없음")
+        category = item.get("clCdNm", "정보없음")
+        results.append(
+            f"[{i}] {name}\n"
+            f"   종류: {category}\n"
+            f"   주소: {addr}\n"
+            f"   전화: {tel}"
         )
 
-    try:
-        parsed = parse_region(region)
-        url = "http://apis.data.go.kr/B551182/hospInfoServicev2/getHospBasisList"
-        params = {
-            "serviceKey": api_key,
-            "numOfRows": "5",
-            "pageNo": "1",
-            "sidoCd": parsed["sidoCd"],
-            "sgguCd": parsed["sgguCd"],
-            "emdongNm": parsed.get("emdongNm", "") if parsed["sidoCd"] else parsed["raw"],
-            "yadmNm": "",
-            "zipCd": "",
-            "_type": "json",
-        }
-        if specialty:
-            params["dgsbjtCd"] = _get_specialty_code(specialty)
-
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(url, params=params)
-            data = response.json()
-
-        items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
-        if not items:
-            return f"'{region}' 지역에서 관련 병원을 찾을 수 없습니다."
-
-        if isinstance(items, dict):
-            items = [items]
-
-        results = []
-        for i, item in enumerate(items[:5], 1):
-            name = item.get("yadmNm", "정보없음")
-            addr = item.get("addr", "정보없음")
-            tel = item.get("telno", "정보없음")
-            category = item.get("clCdNm", "정보없음")
-            results.append(
-                f"[{i}] {name}\n"
-                f"   종류: {category}\n"
-                f"   주소: {addr}\n"
-                f"   전화: {tel}"
-            )
-
-        return "\n\n".join(results)
-    except Exception as e:
-        custom_logger.error(f"병원 검색 오류: {e}")
-        return f"병원 검색 중 오류가 발생했습니다: {str(e)}"
+    return "\n\n".join(results)
 
 
 # ============================================================
@@ -161,53 +144,41 @@ async def get_drug_info(drug_name: str) -> str:
     Args:
         drug_name: 검색할 의약품명 (예: '타이레놀', '아스피린', '아목시실린')
     """
-    api_key = settings.PUBLIC_DATA_API_KEY
-    if not api_key:
-        return (
-            "의약품 정보 조회 기능을 사용하려면 공공데이터포털(data.go.kr)에서 "
-            "'식품의약품안전처_의약품개요정보' API 키를 발급받아 "
-            ".env 파일의 PUBLIC_DATA_API_KEY에 설정해주세요."
+    url = settings.DRUG_API_URL
+    params = {
+        "serviceKey": settings.PUBLIC_DATA_API_KEY,
+        "itemName": drug_name,
+        "numOfRows": "3",
+        "pageNo": "1",
+        "type": "json",
+    }
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(url, params=params)
+        data = response.json()
+
+    items = data.get("body", {}).get("items", [])
+    if not items:
+        return f"'{drug_name}'에 대한 의약품 정보를 찾을 수 없습니다."
+
+    results = []
+    for i, item in enumerate(items[:3], 1):
+        name = item.get("itemName", "정보없음")
+        company = item.get("entpName", "정보없음")
+        effect = item.get("efcyQesitm", "정보없음")
+        usage = item.get("useMethodQesitm", "정보없음")
+        warning = item.get("atpnQesitm", "정보없음")
+        side_effect = item.get("seQesitm", "정보없음")
+
+        results.append(
+            f"[{i}] {name} ({company})\n"
+            f"   효능: {effect[:200]}\n"
+            f"   용법: {usage[:200]}\n"
+            f"   주의사항: {warning[:200]}\n"
+            f"   부작용: {side_effect[:200]}"
         )
 
-    try:
-        url = "http://apis.data.go.kr/1471000/DrbEasyDrugInfoService/getDrbEasyDrugList"
-        params = {
-            "serviceKey": api_key,
-            "itemName": drug_name,
-            "numOfRows": "3",
-            "pageNo": "1",
-            "type": "json",
-        }
-
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(url, params=params)
-            data = response.json()
-
-        items = data.get("body", {}).get("items", [])
-        if not items:
-            return f"'{drug_name}'에 대한 의약품 정보를 찾을 수 없습니다."
-
-        results = []
-        for i, item in enumerate(items[:3], 1):
-            name = item.get("itemName", "정보없음")
-            company = item.get("entpName", "정보없음")
-            effect = item.get("efcyQesitm", "정보없음")
-            usage = item.get("useMethodQesitm", "정보없음")
-            warning = item.get("atpnQesitm", "정보없음")
-            side_effect = item.get("seQesitm", "정보없음")
-
-            results.append(
-                f"[{i}] {name} ({company})\n"
-                f"   효능: {effect[:200]}\n"
-                f"   용법: {usage[:200]}\n"
-                f"   주의사항: {warning[:200]}\n"
-                f"   부작용: {side_effect[:200]}"
-            )
-
-        return "\n\n".join(results)
-    except Exception as e:
-        custom_logger.error(f"의약품 정보 조회 오류: {e}")
-        return f"의약품 정보 조회 중 오류가 발생했습니다: {str(e)}"
+    return "\n\n".join(results)
 
 
 # ============================================================
@@ -221,59 +192,47 @@ async def search_emergency_rooms(region: str) -> str:
     Args:
         region: 검색할 지역명 (예: '서울', '서울 강남구', '부산')
     """
-    api_key = settings.PUBLIC_DATA_API_KEY
-    if not api_key:
-        return (
-            "응급실 정보 조회 기능을 사용하려면 공공데이터포털(data.go.kr)에서 "
-            "'국립중앙의료원_응급의료정보제공서비스' API 키를 발급받아 "
-            ".env 파일의 PUBLIC_DATA_API_KEY에 설정해주세요."
+    parsed = parse_region(region)
+    url = settings.EMERGENCY_API_URL
+    params = {
+        "serviceKey": settings.PUBLIC_DATA_API_KEY,
+        "STAGE1": parsed["sido_name"] if parsed["sido_name"] else parsed["raw"],
+        "STAGE2": parsed["sggu_name"],
+        "pageNo": "1",
+        "numOfRows": "5",
+    }
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(url, params=params)
+
+    root = ET.fromstring(response.text)
+
+    items = root.findall(".//item")
+    if not items:
+        return f"'{region}' 지역의 응급실 정보를 찾을 수 없습니다."
+
+    results = []
+    for i, item in enumerate(items[:5], 1):
+        name = _xml_text(item, "dutyName")
+        addr = _xml_text(item, "dutyAddr")
+        tel = _xml_text(item, "dutyTel3")
+        hvec = _xml_text(item, "hvec")
+        hvoc = _xml_text(item, "hvoc")
+
+        try:
+            surgery_available = "가능" if hvoc and int(hvoc) > 0 else "불가"
+        except (ValueError, TypeError):
+            surgery_available = "정보없음"
+
+        results.append(
+            f"[{i}] {name}\n"
+            f"   주소: {addr}\n"
+            f"   응급실 전화: {tel}\n"
+            f"   응급실 가용 병상: {hvec}개\n"
+            f"   수술실 가용: {surgery_available}"
         )
 
-    try:
-        parsed = parse_region(region)
-        url = "http://apis.data.go.kr/B552657/ErmctInfoInqireService/getEmrrmRltmUsefulSckbdInfoInqire"
-        params = {
-            "serviceKey": api_key,
-            "STAGE1": parsed["sido_name"] if parsed["sido_name"] else parsed["raw"],
-            "STAGE2": parsed["sggu_name"],
-            "pageNo": "1",
-            "numOfRows": "5",
-        }
-
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(url, params=params)
-
-        root = ET.fromstring(response.text)
-
-        items = root.findall(".//item")
-        if not items:
-            return f"'{region}' 지역의 응급실 정보를 찾을 수 없습니다."
-
-        results = []
-        for i, item in enumerate(items[:5], 1):
-            name = _xml_text(item, "dutyName")
-            addr = _xml_text(item, "dutyAddr")
-            tel = _xml_text(item, "dutyTel3")
-            hvec = _xml_text(item, "hvec")
-            hvoc = _xml_text(item, "hvoc")
-
-            try:
-                surgery_available = "가능" if hvoc and int(hvoc) > 0 else "불가"
-            except (ValueError, TypeError):
-                surgery_available = "정보없음"
-
-            results.append(
-                f"[{i}] {name}\n"
-                f"   주소: {addr}\n"
-                f"   응급실 전화: {tel}\n"
-                f"   응급실 가용 병상: {hvec}개\n"
-                f"   수술실 가용: {surgery_available}"
-            )
-
-        return "\n\n".join(results)
-    except Exception as e:
-        custom_logger.error(f"응급실 정보 조회 오류: {e}")
-        return f"응급실 정보 조회 중 오류가 발생했습니다: {str(e)}"
+    return "\n\n".join(results)
 
 
 # ============================================================
@@ -287,53 +246,41 @@ async def search_pharmacies(region: str) -> str:
     Args:
         region: 검색할 지역명 (예: '강남구', '종로구', '서울 중구')
     """
-    api_key = settings.PUBLIC_DATA_API_KEY
-    if not api_key:
-        return (
-            "약국 검색 기능을 사용하려면 공공데이터포털(data.go.kr)에서 "
-            "'건강보험심사평가원_약국정보서비스' API 키를 발급받아 "
-            ".env 파일의 PUBLIC_DATA_API_KEY에 설정해주세요."
+    parsed = parse_region(region)
+    url = settings.PHARMACY_API_URL
+    params = {
+        "serviceKey": settings.PUBLIC_DATA_API_KEY,
+        "numOfRows": "5",
+        "pageNo": "1",
+        "sidoCd": parsed["sidoCd"],
+        "sgguCd": parsed["sgguCd"],
+        "emdongNm": parsed.get("emdongNm", "") if parsed["sidoCd"] else parsed["raw"],
+        "_type": "json",
+    }
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(url, params=params)
+        data = response.json()
+
+    items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+    if not items:
+        return f"'{region}' 지역에서 약국을 찾을 수 없습니다."
+
+    if isinstance(items, dict):
+        items = [items]
+
+    results = []
+    for i, item in enumerate(items[:5], 1):
+        name = item.get("yadmNm", "정보없음")
+        addr = item.get("addr", "정보없음")
+        tel = item.get("telno", "정보없음")
+        results.append(
+            f"[{i}] {name}\n"
+            f"   주소: {addr}\n"
+            f"   전화: {tel}"
         )
 
-    try:
-        parsed = parse_region(region)
-        url = "http://apis.data.go.kr/B551182/pharmacyInfoService/getParmacyBasisList"
-        params = {
-            "serviceKey": api_key,
-            "numOfRows": "5",
-            "pageNo": "1",
-            "sidoCd": parsed["sidoCd"],
-            "sgguCd": parsed["sgguCd"],
-            "emdongNm": parsed.get("emdongNm", "") if parsed["sidoCd"] else parsed["raw"],
-            "_type": "json",
-        }
-
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(url, params=params)
-            data = response.json()
-
-        items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
-        if not items:
-            return f"'{region}' 지역에서 약국을 찾을 수 없습니다."
-
-        if isinstance(items, dict):
-            items = [items]
-
-        results = []
-        for i, item in enumerate(items[:5], 1):
-            name = item.get("yadmNm", "정보없음")
-            addr = item.get("addr", "정보없음")
-            tel = item.get("telno", "정보없음")
-            results.append(
-                f"[{i}] {name}\n"
-                f"   주소: {addr}\n"
-                f"   전화: {tel}"
-            )
-
-        return "\n\n".join(results)
-    except Exception as e:
-        custom_logger.error(f"약국 검색 오류: {e}")
-        return f"약국 검색 중 오류가 발생했습니다: {str(e)}"
+    return "\n\n".join(results)
 
 
 # ============================================================

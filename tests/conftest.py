@@ -3,11 +3,9 @@ import uuid
 from fastapi.testclient import TestClient
 from app.main import app
 
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.agents.medical_agent import create_medical_agent
-from app.core.config import settings
 
 
 @pytest.fixture
@@ -23,19 +21,7 @@ def thread_id():
 
 
 @pytest.fixture
-def llm():
-    """OpenAI LLM 인스턴스"""
-    return ChatOpenAI(
-        model=settings.OPENAI_MODEL,
-        api_key=settings.OPENAI_API_KEY,
-        temperature=0,
-        streaming=True,
-    )
-
-
-@pytest.fixture
-def agent(llm):
+def agent():
     """의료 에이전트 인스턴스"""
     checkpointer = MemorySaver()
-    return create_medical_agent(llm=llm, checkpointer=checkpointer)
-
+    return create_medical_agent(checkpointer=checkpointer)

@@ -30,7 +30,13 @@ class Settings(BaseSettings):
     ES_INDEX: str
 
     # 공공데이터포털 API 키 (병원 검색, 의약품 정보)
-    PUBLIC_DATA_API_KEY: str = ""
+    PUBLIC_DATA_API_KEY: str
+
+    # 공공데이터포털 API URL
+    HOSPITAL_API_URL: str = "http://apis.data.go.kr/B551182/hospInfoServicev2/getHospBasisList"
+    DRUG_API_URL: str = "http://apis.data.go.kr/1471000/DrbEasyDrugInfoService/getDrbEasyDrugList"
+    EMERGENCY_API_URL: str = "http://apis.data.go.kr/B552657/ErmctInfoInqireService/getEmrrmRltmUsefulSckbdInfoInqire"
+    PHARMACY_API_URL: str = "http://apis.data.go.kr/B551182/pharmacyInfoService/getParmacyBasisList"
 
     # DeepAgents 설정
     DEEPAGENT_RECURSION_LIMIT: int = 20

@@ -9,7 +9,6 @@ from app.agents.medical_agent import create_medical_agent
 from app.core.config import settings
 
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
 
@@ -23,35 +22,27 @@ from langgraph.errors import GraphRecursionError
 # ============================================================
 _checkpointer = MemorySaver()
 
+# 에이전트를 모듈 수준에서 한 번만 생성 (checkpointer가 thread_id로 대화 분리)
+_agent = create_medical_agent(checkpointer=_checkpointer)
+
 
 class AgentService:
     def __init__(self):
-        self.agent = None
+        self.agent = _agent
         self.progress_queue: asyncio.Queue = asyncio.Queue()
-
-    def _create_agent(self, thread_id: uuid.UUID = None):
-        """의료 전문 LangChain 에이전트 생성"""
-        llm = ChatOpenAI(
-            model=settings.OPENAI_MODEL,
-            api_key=settings.OPENAI_API_KEY,
-            temperature=0,
-            streaming=True,
-        )
-        self.agent = create_medical_agent(
-            llm=llm,
-            checkpointer=_checkpointer,
-        )
 
     @log_execution
     async def process_query(self, user_messages: str, thread_id: uuid.UUID):
         """사용자 메시지를 처리하고 스트리밍 응답을 생성합니다."""
         try:
-            self._create_agent(thread_id=thread_id)
             custom_logger.info(f"사용자 메시지: {user_messages}")
 
             agent_stream = self.agent.astream(
                 {"messages": [HumanMessage(content=user_messages)]},
-                config={"configurable": {"thread_id": str(thread_id)}},
+                config={
+                    "configurable": {"thread_id": str(thread_id)},
+                    "recursion_limit": settings.DEEPAGENT_RECURSION_LIMIT,
+                },
                 stream_mode="updates",
             )
 

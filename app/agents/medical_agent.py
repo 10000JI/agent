@@ -2,11 +2,13 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 
+from app.agents.middleware import handle_tool_errors
 from app.agents.prompts import MEDICAL_SYSTEM_PROMPT
 from app.agents.tools import (
     search_medical_info, search_hospitals, get_drug_info,
     search_emergency_rooms, search_pharmacies,
 )
+from app.core.config import settings
 from app.utils.logger import custom_logger
 
 
@@ -17,11 +19,13 @@ MEDICAL_TOOLS = [
 ]
 
 
-def create_medical_agent(llm: ChatOpenAI, checkpointer: MemorySaver):
+def create_medical_agent(checkpointer: MemorySaver):
     """의료 전문 에이전트를 생성합니다.
 
+    create_agent는 내부적으로 LangGraph StateGraph를 구성하며,
+    ToolNode의 기본 에러 핸들러가 도구 실행 예외를 자동으로 처리합니다.
+
     Args:
-        llm: ChatOpenAI 모델 인스턴스
         checkpointer: 대화 기록 체크포인터 (MemorySaver 또는 SqliteSaver)
 
     Returns:
@@ -29,11 +33,19 @@ def create_medical_agent(llm: ChatOpenAI, checkpointer: MemorySaver):
     """
     custom_logger.info("의료 에이전트 생성 중...")
 
+    llm = ChatOpenAI(
+        model=settings.OPENAI_MODEL,
+        api_key=settings.OPENAI_API_KEY,
+        temperature=0,
+        streaming=True,
+    )
+
     agent = create_agent(
         model=llm,
         tools=MEDICAL_TOOLS,
         system_prompt=MEDICAL_SYSTEM_PROMPT,
         checkpointer=checkpointer,
+        middleware=[handle_tool_errors],
     )
 
     custom_logger.info(
