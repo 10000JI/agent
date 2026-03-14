@@ -9,6 +9,7 @@ from app.agents.tools import (
     search_emergency_rooms, search_pharmacies,
 )
 from app.core.config import settings
+from app.models.chat import ChatResponse
 from app.utils.logger import custom_logger
 
 
@@ -44,6 +45,7 @@ def create_medical_agent(checkpointer: MemorySaver):
         model=llm,
         tools=MEDICAL_TOOLS,
         system_prompt=MEDICAL_SYSTEM_PROMPT,
+        response_format=ChatResponse,
         checkpointer=checkpointer,
         middleware=[handle_tool_errors],
     )

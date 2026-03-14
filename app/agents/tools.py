@@ -11,17 +11,8 @@ from app.core.config import settings
 
 
 # ============================================================
-# Elasticsearch 클라이언트 및 Retriever 설정
+# Elasticsearch 클라이언트 및 Retriever 설정 (모듈 수준 싱글턴)
 # ============================================================
-
-def _get_es_client() -> Elasticsearch:
-    """Elasticsearch 클라이언트 생성"""
-    return Elasticsearch(
-        settings.ES_URL,
-        basic_auth=(settings.ES_USERNAME, settings.ES_PASSWORD),
-        verify_certs=True,
-    )
-
 
 def _bm25_query(search_query: str) -> dict:
     """BM25 검색 쿼리 생성"""
@@ -39,15 +30,18 @@ def _bm25_query(search_query: str) -> dict:
     }
 
 
-def get_medical_retriever() -> ElasticsearchRetriever:
-    """BM25 기반 ElasticsearchRetriever 생성 (ES 클라이언트 주입)"""
-    es_client = _get_es_client()
-    return ElasticsearchRetriever(
-        index_name=settings.ES_INDEX,
-        body_func=_bm25_query,
-        content_field="content",
-        client=es_client,
-    )
+_es_client = Elasticsearch(
+    settings.ES_URL,
+    basic_auth=(settings.ES_USERNAME, settings.ES_PASSWORD),
+    verify_certs=True,
+)
+
+_medical_retriever = ElasticsearchRetriever(
+    index_name=settings.ES_INDEX,
+    body_func=_bm25_query,
+    content_field="content",
+    client=_es_client,
+)
 
 
 # ============================================================
@@ -61,8 +55,7 @@ def search_medical_info(query: str) -> str:
     Args:
         query: 검색할 증상, 질병명, 치료법 등 (예: '결핵 치료', '천식 증상', '응급처치')
     """
-    retriever = get_medical_retriever()
-    docs = retriever.invoke(query)
+    docs = _medical_retriever.invoke(query)
 
     if not docs:
         return "관련 의료 정보를 찾을 수 없습니다."
@@ -108,6 +101,7 @@ async def search_hospitals(region: str, specialty: Optional[str] = None) -> str:
 
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.get(url, params=params)
+        response.raise_for_status()
         data = response.json()
 
     items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
@@ -155,6 +149,7 @@ async def get_drug_info(drug_name: str) -> str:
 
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.get(url, params=params)
+        response.raise_for_status()
         data = response.json()
 
     items = data.get("body", {}).get("items", [])
@@ -204,8 +199,10 @@ async def search_emergency_rooms(region: str) -> str:
 
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.get(url, params=params)
+        response.raise_for_status()
+        response_text = response.text
 
-    root = ET.fromstring(response.text)
+    root = ET.fromstring(response_text)
 
     items = root.findall(".//item")
     if not items:
@@ -260,6 +257,7 @@ async def search_pharmacies(region: str) -> str:
 
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.get(url, params=params)
+        response.raise_for_status()
         data = response.json()
 
     items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])

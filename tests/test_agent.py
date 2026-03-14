@@ -2,6 +2,7 @@
 
 실제 OpenAI API와 외부 도구를 호출하여 에이전트의 도구 선택과 응답을 검증한다.
 """
+import json
 import pytest
 from langchain_core.messages import HumanMessage
 
@@ -32,7 +33,11 @@ async def _run_agent(agent, question: str, thread_id: str):
                 if message.tool_calls:
                     tool_names.extend(t["name"] for t in message.tool_calls)
                 elif message.content:
-                    final_content = message.content
+                    try:
+                        args = json.loads(message.content)
+                        final_content = args.get("content", message.content)
+                    except (json.JSONDecodeError, TypeError):
+                        final_content = message.content
 
     return tool_names, final_content
 

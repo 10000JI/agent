@@ -40,6 +40,7 @@ async def post_chat(request: ChatRequest):
                 # 스트리밍 중 예외 발생 시 에러 메시지를 스트리밍으로 전송
                 import json
                 from datetime import datetime
+                custom_logger.error(f"에러 상세: {e}")
                 error_response = {
                     "step": "done",
                     "message_id": str(uuid.uuid4()),
@@ -47,7 +48,6 @@ async def post_chat(request: ChatRequest):
                     "content": "요청 처리 중 오류가 발생했습니다. 다시 시도해주세요.",
                     "metadata": {},
                     "created_at": datetime.utcnow().isoformat(),
-                    "error": str(e)
                 }
                 yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
                 custom_logger.error(f"Error in event_generator: {e}")

@@ -34,6 +34,7 @@ class AgentService:
     @log_execution
     async def process_query(self, user_messages: str, thread_id: uuid.UUID):
         """사용자 메시지를 처리하고 스트리밍 응답을 생성합니다."""
+        progress_task = None
         try:
             custom_logger.info(f"사용자 메시지: {user_messages}")
 
@@ -102,13 +103,18 @@ class AgentService:
                                     tool_names = [t["name"] for t in tool_calls]
                                     yield json.dumps({"step": "model", "tool_calls": tool_names}, ensure_ascii=False)
                                 elif message.content:
-                                    # 도구 호출 없이 최종 응답 → "done" 이벤트
+                                    # 구조화된 최종 응답 (response_format=ChatResponse) → "done" 이벤트
+                                    try:
+                                        args = json.loads(message.content)
+                                    except (json.JSONDecodeError, TypeError):
+                                        args = {"content": message.content}
+                                    metadata = args.get("metadata")
                                     yield json.dumps({
                                         "step": "done",
-                                        "message_id": str(uuid.uuid4()),
+                                        "message_id": args.get("message_id", str(uuid.uuid4())),
                                         "role": "assistant",
-                                        "content": message.content,
-                                        "metadata": {},
+                                        "content": args.get("content", message.content),
+                                        "metadata": self._handle_metadata(metadata),
                                         "created_at": datetime.utcnow().isoformat(),
                                     }, ensure_ascii=False)
 
@@ -150,14 +156,31 @@ class AgentService:
             import traceback
             custom_logger.error(f"Error in process_query: {e}")
             custom_logger.error(traceback.format_exc())
+
+            if progress_task is not None:
+                progress_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await progress_task
+
             yield json.dumps(
                 self._error_response(str(e) if not isinstance(e, GraphRecursionError) else None),
                 ensure_ascii=False,
             )
 
     @staticmethod
+    def _handle_metadata(metadata) -> dict:
+        """metadata 객체를 dict로 변환"""
+        result = {}
+        if metadata:
+            for k, v in metadata.items():
+                result[k] = v
+        return result
+
+    @staticmethod
     def _error_response(error: str = None) -> dict:
         """에러 응답 포맷 생성"""
+        if error:
+            custom_logger.error(f"에러 상세: {error}")
         return {
             "step": "done",
             "message_id": str(uuid.uuid4()),
@@ -165,5 +188,4 @@ class AgentService:
             "content": "처리 중 오류가 발생했습니다. 다시 시도해주세요.",
             "metadata": {},
             "created_at": datetime.utcnow().isoformat(),
-            "error": error,
         }
