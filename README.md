@@ -307,10 +307,10 @@ agent/
 
 | 모듈 | 역할 |
 |------|------|
-| `agents/medical_agent.py` | `create_agent()`로 ReAct 에이전트 생성. LLM + 도구 + 시스템 프롬프트 + 체크포인터 + middleware 조합. 모듈 수준 싱글턴으로 운영 |
+| `agents/medical_agent.py` | `create_agent()`로 ReAct 에이전트 생성. LLM + 도구 + 시스템 프롬프트 + `response_format=ChatResponse` + 체크포인터 + middleware 조합. 모듈 수준 싱글턴으로 운영 |
 | `agents/middleware.py` | `@wrap_tool_call` 데코레이터로 도구 실행 예외를 일괄 처리. 타임아웃/네트워크/기타로 분류하여 ToolMessage 반환 |
 | `agents/region_codes.py` | 전국 17개 시도 + ~250개 시군구 코드 매핑. `parse_region()`으로 지역명 → 숫자 코드(병원/약국) + 한글명(응급실) 동시 반환 |
-| `agents/tools.py` | 5개 `@tool` 데코레이터 함수 정의 (4개 async). 비즈니스 로직만 포함, 에러 처리는 middleware에 위임 |
+| `agents/tools.py` | 5개 `@tool` 데코레이터 함수 정의 (4개 async). `raise_for_status()`로 HTTP 에러 감지, 이후 에러 처리는 middleware에 위임. ES 클라이언트/Retriever는 모듈 수준 싱글턴 |
 | `agents/prompts.py` | 의료 AI 페르소나, 도구 사용 가이드, 답변 규칙, 의료 면책 조항을 포함한 시스템 프롬프트 |
 | `services/agent_service.py` | 모듈 수준 싱글턴 에이전트. `MemorySaver` 체크포인터로 대화 기록 유지. `recursion_limit` 적용. `astream(stream_mode="updates")`으로 SSE 이벤트 변환 |
 | `api/routes/chat.py` | SSE `StreamingResponse` 생성. 초기 "Planning" 이벤트 전송 후 에이전트 스트림 연결 |
@@ -376,4 +376,5 @@ curl -N -X POST http://localhost:8000/api/v1/chat \
 
 - 모든 답변은 **일반적인 의료 정보 제공**을 목적으로 하며, 실제 진료나 처방을 대체하지 않습니다.
 - 정확한 판단을 위해 반드시 **전문의를 방문**하세요.
-- 공공데이터포털 API는 일일 호출 제한이 있을 수 있으며, API 키 미설정 시 해당 도구는 안내 메시지를 반환합니다.
+- 공공데이터포털 API는 일일 호출 제한이 있을 수 있습니다.
+- `PUBLIC_DATA_API_KEY`는 필수 설정입니다. 미설정 시 서버가 시작되지 않습니다.
