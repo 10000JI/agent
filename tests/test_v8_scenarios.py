@@ -5,6 +5,10 @@
 - Case 2: 단일 도구 호출 (의약품 정보)
 - Case 3: 멀티턴 대화 (동일 thread_id로 문맥 유지)
 - Case 4: 도구 없이 직접 응답 (일반 인사)
+- Case 5: 단일 도구 호출 (응급실 검색)
+- Case 6: 단일 도구 호출 (의료 문서 검색)
+- Case 7: 복합 질문 — 병원 + 약국
+- Case 8: 증상 기반 진료과목 자동 추론
 """
 import pytest
 import json
@@ -168,5 +172,110 @@ def test_case4_no_tool_greeting(client: TestClient):
     assert len(actual_tools) == 0, f"도구 호출 없이 응답해야 하는데 {actual_tools} 호출됨"
 
     done = get_done_event(events)
+    assert done["role"] == "assistant"
+    assert len(done["content"]) > 0
+
+
+@pytest.mark.order(7)
+def test_case5_emergency_room(client: TestClient):
+    """
+    Case 5: 단일 도구 호출 — 응급실 실시간 정보
+    사용자 질문: "부산 응급실 빈 병상 알려줘"
+    기대: search_emergency_rooms 호출, done 이벤트에 응급실 정보 포함
+    """
+    response = client.post(
+        "/api/v1/chat",
+        json={
+            "thread_id": str(uuid.uuid4()),
+            "message": "부산 응급실 빈 병상 알려줘"
+        }
+    )
+
+    assert response.status_code == 200
+
+    events = parse_sse_response(response.text)
+    tool_calls = get_tool_calls(events)
+    done = get_done_event(events)
+
+    assert "search_emergency_rooms" in tool_calls, f"search_emergency_rooms not found in {tool_calls}"
+    assert done["role"] == "assistant"
+    assert len(done["content"]) > 0
+
+
+@pytest.mark.order(8)
+def test_case6_medical_info(client: TestClient):
+    """
+    Case 6: 단일 도구 호출 — 의료 문서 검색
+    사용자 질문: "고혈압 관리법 알려줘"
+    기대: search_medical_info 호출, done 이벤트에 의료 정보 포함
+    """
+    response = client.post(
+        "/api/v1/chat",
+        json={
+            "thread_id": str(uuid.uuid4()),
+            "message": "고혈압 관리법 알려줘"
+        }
+    )
+
+    assert response.status_code == 200
+
+    events = parse_sse_response(response.text)
+    tool_calls = get_tool_calls(events)
+    done = get_done_event(events)
+
+    assert "search_medical_info" in tool_calls, f"search_medical_info not found in {tool_calls}"
+    assert done["role"] == "assistant"
+    assert len(done["content"]) > 0
+
+
+@pytest.mark.order(9)
+def test_case7_hospital_and_pharmacy(client: TestClient):
+    """
+    Case 7: 복합 질문 — 병원 + 약국
+    사용자 질문: "종로구 정형외과 병원이랑 근처 약국도 같이 알려줘"
+    기대: search_hospitals + search_pharmacies 호출
+    """
+    response = client.post(
+        "/api/v1/chat",
+        json={
+            "thread_id": str(uuid.uuid4()),
+            "message": "종로구 정형외과 병원이랑 근처 약국도 같이 알려줘"
+        }
+    )
+
+    assert response.status_code == 200
+
+    events = parse_sse_response(response.text)
+    tool_calls = get_tool_calls(events)
+    done = get_done_event(events)
+
+    assert "search_hospitals" in tool_calls, f"search_hospitals not found in {tool_calls}"
+    assert "search_pharmacies" in tool_calls, f"search_pharmacies not found in {tool_calls}"
+    assert done["role"] == "assistant"
+    assert len(done["content"]) > 0
+
+
+@pytest.mark.order(10)
+def test_case8_symptom_specialty_inference(client: TestClient):
+    """
+    Case 8: 증상 기반 진료과목 자동 추론
+    사용자 질문: "무릎이 아프고 걷기 힘든데 강남구 병원 추천해줘"
+    기대: search_hospitals 호출 (LLM이 정형외과를 자동 추론)
+    """
+    response = client.post(
+        "/api/v1/chat",
+        json={
+            "thread_id": str(uuid.uuid4()),
+            "message": "무릎이 아프고 걷기 힘든데 강남구 병원 추천해줘"
+        }
+    )
+
+    assert response.status_code == 200
+
+    events = parse_sse_response(response.text)
+    tool_calls = get_tool_calls(events)
+    done = get_done_event(events)
+
+    assert "search_hospitals" in tool_calls, f"search_hospitals not found in {tool_calls}"
     assert done["role"] == "assistant"
     assert len(done["content"]) > 0
