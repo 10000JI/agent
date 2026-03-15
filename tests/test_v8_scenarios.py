@@ -1,3 +1,11 @@
+"""의료 AI 에이전트 시나리오 테스트.
+
+실제 OpenAI API와 외부 도구를 호출하여 SSE 스트리밍 파이프라인의 다양한 시나리오를 검증한다.
+- Case 1: 단일 도구 호출 (병원 검색)
+- Case 2: 단일 도구 호출 (의약품 정보)
+- Case 3: 멀티턴 대화 (동일 thread_id로 문맥 유지)
+- Case 4: 도구 없이 직접 응답 (일반 인사)
+"""
 import pytest
 import json
 import uuid
@@ -10,7 +18,7 @@ def parse_sse_response(response_text: str) -> List[Dict[str, Any]]:
     events = []
     for line in response_text.strip().split('\n'):
         if line.startswith('data: '):
-            data_str = line[6:]  # 'data: ' 제거
+            data_str = line[6:]
             if data_str == '[DONE]':
                 break
             try:
@@ -20,175 +28,145 @@ def parse_sse_response(response_text: str) -> List[Dict[str, Any]]:
     return events
 
 
+def get_tool_calls(events: List[Dict[str, Any]]) -> List[str]:
+    """SSE 이벤트에서 도구 호출 목록을 추출하는 헬퍼"""
+    tool_calls = []
+    for event in events:
+        if event.get("step") == "model" and "tool_calls" in event:
+            tool_calls.extend(event["tool_calls"])
+    return tool_calls
+
+
+def get_done_event(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """SSE 이벤트에서 최종 응답(done)을 추출하는 헬퍼"""
+    done_events = [e for e in events if e.get("step") == "done"]
+    assert len(done_events) >= 1, "No 'done' event found"
+    return done_events[-1]
+
+
 @pytest.mark.order(3)
-def test_case1_simple_sql_generation(client: TestClient, thread_id: str):
+def test_case1_hospital_search(client: TestClient):
     """
-    Case 1: 단순 SQL 생성
-    사용자 질문: "2008년 12월 조직별 유동자산 금액을 조회해줘"
+    Case 1: 단일 도구 호출 — 병원 검색
+    사용자 질문: "강남구 정형외과 병원 추천해줘"
+    기대: search_hospitals 호출, done 이벤트에 병원 정보 포함
     """
     response = client.post(
         "/api/v1/chat",
         json={
-            "thread_id": thread_id,
-            "message": "2008년 12월 조직별 유동자산 금액을 조회해줘"
+            "thread_id": str(uuid.uuid4()),
+            "message": "강남구 정형외과 병원 추천해줘"
         }
     )
-    
+
     assert response.status_code == 200
-    assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-    
-    # SSE 응답 파싱
+    assert "text/event-stream" in response.headers["content-type"]
+
     events = parse_sse_response(response.text)
-    
-    # 최종 응답 확인
-    final_events = [e for e in events if e.get("type") == "final_response"]
-    assert len(final_events) > 0
-    
-    final_message = json.loads(final_events[0]["message"])
-    assert "metadata" in final_message
-    assert final_message["metadata"]["sql"] is not None
-    assert "유동자산" in final_message["metadata"]["sql"]
-    assert "200812" in final_message["metadata"]["sql"]
+    tool_calls = get_tool_calls(events)
+    done = get_done_event(events)
+
+    assert "search_hospitals" in tool_calls, f"search_hospitals not found in {tool_calls}"
+    assert done["role"] == "assistant"
+    assert len(done["content"]) > 0
 
 
 @pytest.mark.order(4)
-def test_case2_grid_generation(client: TestClient, thread_id: str):
+def test_case2_drug_info(client: TestClient):
     """
-    Case 2: Grid까지 생성
-    사용자 질문: "2009년 1월 조직별 제조원가 금액 상위 5개를 보여줘"
+    Case 2: 단일 도구 호출 — 의약품 정보 조회
+    사용자 질문: "아스피린 효능이랑 부작용 알려줘"
+    기대: get_drug_info 호출, done 이벤트에 의약품 정보 포함
     """
     response = client.post(
         "/api/v1/chat",
         json={
-            "thread_id": thread_id,
-            "message": "2009년 1월 조직별 제조원가 금액 상위 5개를 보여줘"
+            "thread_id": str(uuid.uuid4()),
+            "message": "아스피린 효능이랑 부작용 알려줘"
         }
     )
-    
+
     assert response.status_code == 200
-    
+
     events = parse_sse_response(response.text)
-    final_events = [e for e in events if e.get("type") == "final_response"]
-    assert len(final_events) > 0
-    
-    final_message = json.loads(final_events[0]["message"])
-    assert final_message["metadata"]["sql"] is not None
-    assert final_message["metadata"]["data"] is not None
-    assert "columns" in final_message["metadata"]["data"]
-    assert "rows" in final_message["metadata"]["data"]
-    assert "제조원가" in final_message["metadata"]["sql"]
-    assert "200901" in final_message["metadata"]["sql"]
-    assert "LIMIT 5" in final_message["metadata"]["sql"]
+    tool_calls = get_tool_calls(events)
+    done = get_done_event(events)
+
+    assert "get_drug_info" in tool_calls, f"get_drug_info not found in {tool_calls}"
+    assert done["role"] == "assistant"
+    assert len(done["content"]) > 0
 
 
 @pytest.mark.order(5)
-def test_case3_chart_generation_multiturn(client: TestClient):
+def test_case3_multiturn_conversation(client: TestClient):
     """
-    Case 3: Chart까지 생성 (멀티턴)
-    1차: "2009년 12월 본부별 총 인건비 보여줘"
-    2차: "부서별로 상세하게 바꿔줘"
-    3차: "인당 평균 인건비도 같이 보여줘"
+    Case 3: 멀티턴 대화 (동일 thread_id로 문맥 유지)
+    1차: "서울 응급실 빈 병상 알려줘"
+    2차: "거기 근처 약국도 알려줘"
+    기대: 1차에서 search_emergency_rooms, 2차에서 search_pharmacies 호출
+          2차 응답이 서울 지역 맥락을 유지
     """
     thread_id = str(uuid.uuid4())
-    
+
     # 1차 요청
     response1 = client.post(
         "/api/v1/chat",
         json={
             "thread_id": thread_id,
-            "message": "2009년 12월 본부별 총 인건비 보여줘"
+            "message": "서울 응급실 빈 병상 알려줘"
         }
     )
-    
+
     assert response1.status_code == 200
     events1 = parse_sse_response(response1.text)
-    final1 = [e for e in events1 if e.get("type") == "final_response"]
-    assert len(final1) > 0
-    
-    msg1 = json.loads(final1[0]["message"])
-    assert "본부" in msg1["metadata"]["sql"] or "head_nm" in msg1["metadata"]["sql"]
-    assert msg1["metadata"]["chart"] is not None
-    
-    # 2차 요청
+    tool_calls1 = get_tool_calls(events1)
+    done1 = get_done_event(events1)
+
+    assert "search_emergency_rooms" in tool_calls1
+    assert len(done1["content"]) > 0
+
+    # 2차 요청 — 동일 thread_id로 문맥 유지
     response2 = client.post(
         "/api/v1/chat",
         json={
             "thread_id": thread_id,
-            "message": "부서별로 상세하게 바꿔줘"
+            "message": "거기 근처 약국도 알려줘"
         }
     )
-    
+
     assert response2.status_code == 200
     events2 = parse_sse_response(response2.text)
-    final2 = [e for e in events2 if e.get("type") == "final_response"]
-    assert len(final2) > 0
-    
-    msg2 = json.loads(final2[0]["message"])
-    assert "dept_nm" in msg2["metadata"]["sql"] or "부서" in msg2["metadata"]["sql"]
-    
-    # 3차 요청
-    response3 = client.post(
-        "/api/v1/chat",
-        json={
-            "thread_id": thread_id,
-            "message": "인당 평균 인건비도 같이 보여줘"
-        }
-    )
-    
-    assert response3.status_code == 200
-    events3 = parse_sse_response(response3.text)
-    final3 = [e for e in events3 if e.get("type") == "final_response"]
-    assert len(final3) > 0
-    
-    msg3 = json.loads(final3[0]["message"])
-    assert "avg_pay_per_person" in msg3["metadata"]["sql"] or "평균" in msg3["metadata"]["sql"]
-    assert len(msg3["metadata"]["data"]["columns"]) == 3  # dept_nm, total_pay, avg_pay_per_person
+    tool_calls2 = get_tool_calls(events2)
+    done2 = get_done_event(events2)
+
+    assert "search_pharmacies" in tool_calls2, f"search_pharmacies not found in {tool_calls2}"
+    assert len(done2["content"]) > 0
 
 
 @pytest.mark.order(6)
-def test_case4_item_inquiry_multiturn(client: TestClient):
+def test_case4_no_tool_greeting(client: TestClient):
     """
-    Case 4: 항목 조회 요청 (멀티턴)
-    1차: "우리 DB에서 제조원가는 어디서 확인할 수 있어?"
-    2차: "유동자산이랑 비유동자산 차이가 뭐야?"
+    Case 4: 도구 호출 없이 직접 응답 — 일반 인사
+    사용자 질문: "안녕하세요"
+    기대: 도구 호출 없이 done 이벤트만 반환
     """
-    thread_id = str(uuid.uuid4())
-    
-    # 1차 요청
-    response1 = client.post(
+    response = client.post(
         "/api/v1/chat",
         json={
-            "thread_id": thread_id,
-            "message": "우리 DB에서 제조원가는 어디서 확인할 수 있어?"
+            "thread_id": str(uuid.uuid4()),
+            "message": "안녕하세요"
         }
     )
-    
-    assert response1.status_code == 200
-    events1 = parse_sse_response(response1.text)
-    final1 = [e for e in events1 if e.get("type") == "final_response"]
-    assert len(final1) > 0
-    
-    msg1 = json.loads(final1[0]["message"])
-    assert "제조원가" in msg1["content"]
-    assert "f_pl" in msg1["content"]
-    assert msg1["metadata"]["sql"] is None  # SQL 생성 없음
-    
-    # 2차 요청
-    response2 = client.post(
-        "/api/v1/chat",
-        json={
-            "thread_id": thread_id,
-            "message": "유동자산이랑 비유동자산 차이가 뭐야?"
-        }
-    )
-    
-    assert response2.status_code == 200
-    events2 = parse_sse_response(response2.text)
-    final2 = [e for e in events2 if e.get("type") == "final_response"]
-    assert len(final2) > 0
-    
-    msg2 = json.loads(final2[0]["message"])
-    assert "유동자산" in msg2["content"]
-    assert "비유동자산" in msg2["content"]
-    assert "f_bs" in msg2["content"]
-    assert msg2["metadata"]["sql"] is None  # SQL 생성 없음
+
+    assert response.status_code == 200
+
+    events = parse_sse_response(response.text)
+
+    # Planning 이벤트 제외하고 실제 도구 호출이 없어야 함
+    tool_calls = get_tool_calls(events)
+    actual_tools = [t for t in tool_calls if t != "Planning"]
+    assert len(actual_tools) == 0, f"도구 호출 없이 응답해야 하는데 {actual_tools} 호출됨"
+
+    done = get_done_event(events)
+    assert done["role"] == "assistant"
+    assert len(done["content"]) > 0
