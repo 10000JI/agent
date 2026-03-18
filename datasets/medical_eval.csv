@@ -1,0 +1,26 @@
+input,expected_tool,expected_keywords
+강남구 정형외과 병원 추천해줘,search_hospitals,병원
+아스피린 효능이랑 부작용 알려줘,get_drug_info,아스피린
+서울 응급실 빈 병상 알려줘,search_emergency_rooms,응급실
+고혈압 관리법 알려줘,search_medical_info,고혈압
+부산 응급실 빈 병상 알려줘,search_emergency_rooms,응급실
+종로구 정형외과 병원이랑 근처 약국도 같이 알려줘,"search_hospitals,search_pharmacies",병원
+무릎이 아프고 걷기 힘든데 강남구 병원 추천해줘,search_hospitals,병원
+안녕하세요,none,안녕
+타이레놀이랑 아스피린 같이 먹어도 되나요?,get_drug_info,타이레놀
+대구 중구 소아과 야간진료 가능한 병원 있어?,search_hospitals,소아
+결핵 초기 증상이랑 검사 방법 알려줘,search_medical_info,결핵
+인천 남동구 약국 찾아줘,search_pharmacies,약국
+머리가 깨질듯이 아프고 열이 39도인데 어디로 가야해?,search_emergency_rooms,응급
+아이가 새벽에 갑자기 고열이 나는데 부산 응급실이랑 해열제 정보 둘 다 알려줘,"search_emergency_rooms,get_drug_info",응급실
+서울 강남구 피부과 추천해주고 근처 약국도 같이 알려줘,"search_hospitals,search_pharmacies",피부과
+목이 붓고 삼키기 힘든데 무슨 과에 가야 해?,search_hospitals,이비인후과
+당뇨병 관리할 때 식단 주의사항이 뭐야?,search_medical_info,당뇨
+오늘 날씨 어때?,none,날씨
+제주도에서 정형외과 가려면 어디로 가야돼?,search_hospitals,제주
+임산부가 먹으면 안되는 약 알려줘,get_drug_info,임산부
+허리 디스크 치료법이랑 서울 강남 정형외과 같이 알려줘,"search_medical_info,search_hospitals",디스크
+고마워 잘 알겠어,none,감사
+대전 응급실 빈 병상이랑 근처 약국 같이 알려줘,"search_emergency_rooms,search_pharmacies",대전
+속이 메스껍고 소화가 안되는데 어떤 약 먹으면 돼?,get_drug_info,소화
+어깨가 결리고 팔이 저린데 무슨 병원을 가야하지?,search_hospitals,정형외과
