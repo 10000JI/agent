@@ -34,12 +34,6 @@ def _configure_opik():
 
 _configure_opik()
 
-if settings.OPIK:
-    from opik.integrations.langchain import OpikTracer
-    _opik_tracer = OpikTracer(project_name=settings.OPIK.PROJECT)
-else:
-    _opik_tracer = None
-
 # ============================================================
 # 체크포인터 설정 (대화 기록 유지)
 # 1안: MemorySaver (서버 재시작 시 초기화)
@@ -51,6 +45,12 @@ _checkpointer = MemorySaver()
 
 # 에이전트를 모듈 수준에서 한 번만 생성 (checkpointer가 thread_id로 대화 분리)
 _agent = create_medical_agent(checkpointer=_checkpointer)
+
+# track_langgraph: 그래프를 한 번 래핑하면 이후 모든 호출이 자동 트레이싱됨
+if settings.OPIK:
+    from opik.integrations.langchain import OpikTracer, track_langgraph
+    _opik_tracer = OpikTracer(project_name=settings.OPIK.PROJECT)
+    _agent = track_langgraph(_agent, _opik_tracer)
 
 
 class AgentService:
@@ -65,13 +65,11 @@ class AgentService:
         try:
             custom_logger.info(f"사용자 메시지: {user_messages}")
 
-            callbacks = [_opik_tracer] if _opik_tracer else []
             agent_stream = self.agent.astream(
                 {"messages": [HumanMessage(content=user_messages)]},
                 config={
                     "configurable": {"thread_id": str(thread_id)},
                     "recursion_limit": settings.DEEPAGENT_RECURSION_LIMIT,
-                    "callbacks": callbacks,
                 },
                 stream_mode="updates",
             )
