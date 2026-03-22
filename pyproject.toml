@@ -15,6 +15,7 @@ dependencies = [
     "opik>=1.10.4",
     "elasticsearch>=8.19.3",
     "langchain-elasticsearch>=1.0.0",
+    "deepeval>=3.9.2",
 ]
 
 [build-system]
