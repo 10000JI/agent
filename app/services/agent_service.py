@@ -49,7 +49,10 @@ _agent = create_medical_agent(checkpointer=_checkpointer)
 # track_langgraph: 그래프를 한 번 래핑하면 이후 모든 호출이 자동 트레이싱됨
 if settings.OPIK:
     from opik.integrations.langchain import OpikTracer, track_langgraph
-    _opik_tracer = OpikTracer(project_name=settings.OPIK.PROJECT)
+    _opik_tracer = OpikTracer(
+        tags=["medical-agent"],
+        metadata={"model": settings.OPENAI_MODEL},
+    )
     _agent = track_langgraph(_agent, _opik_tracer)
 
 
@@ -60,7 +63,7 @@ class AgentService:
 
     @log_execution
     async def process_query(self, user_messages: str, thread_id: uuid.UUID):
-        """사용자 메시지를 처리하고 스트리밍 응답을 생성합니다."""
+        """SSE 스트리밍: model(도구 호출) → tools(실행 결과) → done(최종 응답) 순서로 전달"""
         progress_task = None
         try:
             custom_logger.info(f"사용자 메시지: {user_messages}")
@@ -68,15 +71,15 @@ class AgentService:
             agent_stream = self.agent.astream(
                 {"messages": [HumanMessage(content=user_messages)]},
                 config={
-                    "configurable": {"thread_id": str(thread_id)},
-                    "recursion_limit": settings.DEEPAGENT_RECURSION_LIMIT,
+                    "configurable": {"thread_id": str(thread_id)},  # 멀티턴 대화 구분
+                    "recursion_limit": settings.DEEPAGENT_RECURSION_LIMIT,  # ReAct 무한 루프 방지
                 },
-                stream_mode="updates",
+                stream_mode="updates",  # 각 단계(model→tools→...)를 개별 청크로 수신
             )
 
             agent_iterator = agent_stream.__aiter__()
-            agent_task = asyncio.create_task(agent_iterator.__anext__())
-            progress_task = asyncio.create_task(self.progress_queue.get())
+            agent_task = asyncio.create_task(agent_iterator.__anext__())  # 에이전트 스트림
+            progress_task = asyncio.create_task(self.progress_queue.get())  # 진행 상황 이벤트
 
             while True:
                 pending = {agent_task}
@@ -114,7 +117,7 @@ class AgentService:
 
                     custom_logger.info(f"에이전트 청크: {chunk}")
                     try:
-                        for step, event in chunk.items():
+                        for step, event in chunk.items():  # step: "model"(LLM) 또는 "tools"(도구 결과)
                             if not event or step not in ("model", "tools"):
                                 continue
                             messages = event.get("messages", [])
