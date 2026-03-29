@@ -4,8 +4,9 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from app.agents.middleware import handle_tool_errors
 from app.agents.prompts import MEDICAL_SYSTEM_PROMPT
+from app.agents.search_agent import search_medical_info
 from app.agents.tools import (
-    search_medical_info, search_hospitals, get_drug_info,
+    search_hospitals, get_drug_info,
     search_emergency_rooms, search_pharmacies,
 )
 from app.core.config import settings
@@ -42,12 +43,12 @@ def create_medical_agent(checkpointer: MemorySaver):
     )
 
     agent = create_agent(
-        model=llm,
-        tools=MEDICAL_TOOLS,
-        system_prompt=MEDICAL_SYSTEM_PROMPT,
-        response_format=ChatResponse,
-        checkpointer=checkpointer,
-        middleware=[handle_tool_errors],
+        model=llm,                              # LLM (GPT-4.1)
+        tools=MEDICAL_TOOLS,                    # 5개 도구 (병원, 약물, 응급실, 약국, ES 검색)
+        system_prompt=MEDICAL_SYSTEM_PROMPT,     # 의료 도메인 역할 지시
+        response_format=ChatResponse,            # 응답을 정해진 형식(message_id, content, metadata)으로 통일
+        checkpointer=checkpointer,               # 대화 기록 저장 → thread_id로 멀티턴 대화 유지
+        middleware=[handle_tool_errors],          # 도구 실행 중 에러 발생 시 자동 복구
     )
 
     custom_logger.info(

@@ -1,5 +1,5 @@
 from typing import Dict, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from uuid import UUID
 
 
@@ -15,4 +15,4 @@ class ResponseMetadata(BaseModel):
 class ChatResponse(BaseModel):
     message_id: str
     content: str
-    metadata: ResponseMetadata
+    metadata: ResponseMetadata = Field(default_factory=ResponseMetadata)

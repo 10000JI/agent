@@ -2,77 +2,14 @@ import xml.etree.ElementTree as ET
 from typing import Optional
 
 import httpx
-from elasticsearch import Elasticsearch
 from langchain_core.tools import tool
-from langchain_elasticsearch import ElasticsearchRetriever
 
 from app.agents.region_codes import parse_region
 from app.core.config import settings
 
 
 # ============================================================
-# Elasticsearch 클라이언트 및 Retriever 설정 (모듈 수준 싱글턴)
-# ============================================================
-
-def _bm25_query(search_query: str) -> dict:
-    """BM25 검색 쿼리 생성"""
-    return {
-        "query": {
-            "match": {
-                "content": {
-                    "query": search_query,
-                    "analyzer": "standard"
-                }
-            }
-        },
-        "size": 5,
-        "_source": ["c_id", "content", "source_spec", "creation_year"]
-    }
-
-
-_es_client = Elasticsearch(
-    settings.ES_URL,
-    basic_auth=(settings.ES_USERNAME, settings.ES_PASSWORD),
-    verify_certs=True,
-)
-
-_medical_retriever = ElasticsearchRetriever(
-    index_name=settings.ES_INDEX,
-    body_func=_bm25_query,
-    content_field="content",
-    client=_es_client,
-)
-
-
-# ============================================================
-# Tool 1: 의료 문서 검색 (Elasticsearch BM25) — 동기 유지
-# ============================================================
-
-@tool
-def search_medical_info(query: str) -> str:
-    """주어진 증상, 질병명, 치료법 등을 기반으로 Elasticsearch에서 관련 의료 정보를 검색합니다.
-
-    Args:
-        query: 검색할 증상, 질병명, 치료법 등 (예: '결핵 치료', '천식 증상', '응급처치')
-    """
-    docs = _medical_retriever.invoke(query)
-
-    if not docs:
-        return "관련 의료 정보를 찾을 수 없습니다."
-
-    results = []
-    for i, doc in enumerate(docs[:5], 1):
-        content = doc.page_content[:500]
-        meta = doc.metadata.get("_source", doc.metadata)
-        source = meta.get("source_spec", "unknown")
-        year = meta.get("creation_year", "unknown")
-        results.append(f"[문서 {i}] (출처: {source}, 연도: {year})\n{content}")
-
-    return "\n\n---\n\n".join(results)
-
-
-# ============================================================
-# Tool 2: 병원 정보 검색 (건강보험심사평가원 API)
+# Tool 1: 병원 정보 검색 (건강보험심사평가원 API)
 # ============================================================
 
 @tool
@@ -292,11 +229,11 @@ def _xml_text(item, tag: str) -> str:
 
 
 # ============================================================
-# 진료과목 코드 매핑 (건강보험심사평가원 기준, API 검증 완료)
+# 진료과목 코드 매핑 (건강보험심사평가원 기준)
 # ============================================================
 
 def _get_specialty_code(specialty: str) -> str:
-    """진료과목명을 코드로 변환"""
+    """진료과목명 → API 코드 변환 (예: "정형외과" → "05")"""
     codes = {
         "내과": "01", "신경과": "02", "정신건강의학과": "03", "외과": "04",
         "정형외과": "05", "신경외과": "06", "흉부외과": "07", "성형외과": "08",

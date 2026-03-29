@@ -233,6 +233,7 @@ _deepeval_medical_accuracy = DeepEvalGEval(
         "일반 인사 등 의료와 무관한 응답은 높은 점수를 부여한다.",
     ],
     evaluation_params=[LLMTestCaseParams.ACTUAL_OUTPUT],
+    model="gpt-4.1-mini",
     threshold=0.5,
 )
 
@@ -309,17 +310,15 @@ def run_agent(query: str) -> dict:
 
     messages = result.get("messages", [])
 
-    # 호출된 도구 이름 수집 + 도구 결과(context) 수집
     tool_calls = []
     tool_results = []
     for msg in messages:
-        if hasattr(msg, "tool_calls") and msg.tool_calls:
+        if hasattr(msg, "tool_calls") and msg.tool_calls:  # AIMessage → 도구 호출 결정
             tool_calls.extend([tc["name"] for tc in msg.tool_calls])
-        if hasattr(msg, "tool_call_id") and msg.content:
+        if hasattr(msg, "tool_call_id") and msg.content:  # ToolMessage → 도구 실행 결과
             tool_results.append(msg.content[:500])
 
-    # 최종 응답 (마지막 AI 메시지)
-    final_content = ""
+    final_content = ""  # 마지막 AIMessage에서 최종 응답 추출 (JSON → content 필드)
     for msg in reversed(messages):
         if hasattr(msg, "content") and msg.content and not hasattr(msg, "tool_call_id"):
             try:
