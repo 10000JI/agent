@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # ── 에이전트 동작 설정 ──
     # ReAct 루프의 최대 반복 횟수 (도구 호출 → 판단 → 도구 호출 ... 무한 루프 방지)
-    DEEPAGENT_RECURSION_LIMIT: int = 20
+    DEEPAGENT_RECURSION_LIMIT: int = 15  # ReAct 루프 최대 반복 횟수 (agent 3 기준)
 
     # ── Opik 관찰성 설정 (선택) ──
     # .env에 OPIK__URL_OVERRIDE 등을 설정하면 자동으로 로드됩니다.

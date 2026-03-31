@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from app.utils.logger import custom_logger
@@ -7,6 +8,8 @@ from app.services.agent_service import AgentService
 from fastapi.responses import StreamingResponse
 
 chat_router = APIRouter()
+
+_agent_service = AgentService()
 
 
 @chat_router.post("/chat")
@@ -24,18 +27,27 @@ async def post_chat(request: ChatRequest):
     """
     custom_logger.info(f"API Request: {request}")
     try:
-        # agent_service = AgentService()
         thread_id = getattr(request, "thread_id", uuid.uuid4())
-        
+
         async def event_generator():
             try:
                 yield f'data: {{"step": "model", "tool_calls": ["Planning"]}}\n\n'
-                agent_service = AgentService()
-                async for chunk in agent_service.process_query(
+                gen = _agent_service.process_query(
                     user_messages=request.message,
                     thread_id=thread_id
-                ):
-                    yield f"data: {chunk}\n\n"
+                ).__aiter__()
+                task = asyncio.create_task(gen.__anext__())
+                while True:
+                    done_tasks, _ = await asyncio.wait({task}, timeout=3.0)
+                    if done_tasks:
+                        try:
+                            chunk = task.result()
+                            yield f"data: {chunk}\n\n"
+                            task = asyncio.create_task(gen.__anext__())
+                        except StopAsyncIteration:
+                            break
+                    else:
+                        yield ": heartbeat\n\n"
             except Exception as e:
                 # 스트리밍 중 예외 발생 시 에러 메시지를 스트리밍으로 전송
                 import json
